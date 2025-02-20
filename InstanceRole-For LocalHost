@@ -1,0 +1,210 @@
+using System;
+using System.Data.SqlClient;
+using System.Diagnostics;
+using System.IO;
+using System.Windows.Forms;
+
+namespace Opex_OEE.Layers.DAL
+{
+    public class InstanceRole
+    {
+
+        private static readonly string[] PreferredInstances = { "ProjectsV13", "MSSQLLocalDB" };
+        private static string DataBase = "OEEDB.mdf";
+        public InstanceRole()
+        {
+           
+        }
+       public static string[] GetLocalDBInstances()
+        {
+            string output = "";
+            try
+            {
+                Process process = new Process();
+                process.StartInfo.FileName = "cmd.exe";
+                process.StartInfo.Arguments = "/C sqllocaldb info"; // Runs "sqllocaldb info" in cmd
+
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.CreateNoWindow = true;
+                process.Start();
+
+                output = process.StandardOutput.ReadToEnd();
+                process.WaitForExit();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error retrieving LocalDB instances: " + ex.Message);
+            }
+
+            return output.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+
+
+        /// <summary>
+        /// Ensures a LocalDB instance is running automatically.
+        /// </summary>
+        public static string EnsureLocalDBRunning()
+        {
+            string getInstance = "";
+            if (GetLocalDBInstances().Length > 0)
+            {
+                foreach (string instance in GetLocalDBInstances())
+                {
+                    if (CheckLocalDBInstanceExists(instance))
+                    {
+                        if (!IsLocalDBInstanceRunning(instance))
+                        {
+                            StartLocalDBInstance(instance);
+                            getInstance= instance;
+                        }
+                        return instance;  // Exit once an instance is successfully started
+                    }
+                }
+                LogError("❌ No suitable LocalDB instance found.");
+            }
+            LogError("❌ No LocalDB instance found.");
+            return getInstance;
+        }
+
+        /// <summary>
+        /// Checks if the specified LocalDB instance exists.
+        /// </summary>
+        private static bool CheckLocalDBInstanceExists(string localDBInstance)
+        {
+            try
+            {
+                string output = RunCommand("sqllocaldb info");
+                return output.Contains(localDBInstance);
+            }
+            catch (Exception ex)
+            {
+                LogError($"⚠ Error checking LocalDB instances: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checks if the LocalDB instance is currently running.
+        /// </summary>
+        private static bool IsLocalDBInstanceRunning(string localDBInstance)
+        {
+            try
+            {
+                string output = RunCommand($"sqllocaldb i \"{localDBInstance}\"");
+                return output.Contains("Running");
+            }
+            catch (Exception ex)
+            {
+                LogError($"⚠ Error retrieving LocalDB status: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Starts the given LocalDB instance.
+        /// </summary>
+        private static void StartLocalDBInstance(string localDBInstance)
+        {
+            try
+            {
+                string output = RunCommand($"sqllocaldb start \"{localDBInstance}\"");
+                LogInfo($"✅ Started LocalDB instance: {localDBInstance}");
+            }
+            catch (Exception ex)
+            {
+                LogError($"❌ Error starting LocalDB instance: {ex.Message}");
+            }
+        }
+
+        public static string GetConnectionString()
+        {
+            // Example 1: Creating from existing connection string
+            string existingConnectionString = "Data Source=(LocalDB)\\MSSQLLocalDB;AttachDbFilename=D:\\SoftWare\\Opex-OOE\\Opex-OOE\\OEEDB.mdf;Integrated Security=True";
+            var builder = new SqlConnectionStringBuilder(existingConnectionString);
+
+            // Get the modified connection string
+            string newConnectionString = builder.ConnectionString;
+
+            // Example 2: LocalDB with MDF file
+            var localDbBuilder = new SqlConnectionStringBuilder
+            {
+                DataSource = @"(localdb)\MSSQLLocalDB",
+                AttachDBFilename = @"D:\SoftWare\Opex-OOE\Opex-OOE\OEEDB.mdf",
+                IntegratedSecurity = true
+            };
+    
+             // Example 4: Parse and modify specific values
+             var modifyBuilder = new SqlConnectionStringBuilder(existingConnectionString);
+
+            // Read values
+            string server = modifyBuilder.DataSource;
+            string database = modifyBuilder.InitialCatalog;
+
+            // Modify values-instanceName
+            modifyBuilder.DataSource = $"(localdb)\\{EnsureLocalDBRunning()}"; 
+            modifyBuilder.AttachDBFilename = GetDBFullPath();
+            modifyBuilder.IntegratedSecurity = true;
+
+            string connectionString = modifyBuilder.ConnectionString;
+            // Get the final connection string
+            string finalConnectionString = modifyBuilder.ConnectionString;
+
+            // Example 5: Using a complete connection string with LocalDB
+           
+          
+            return finalConnectionString; // Return ConnectionString property, not the builder object
+        }
+
+
+        /// <summary>
+        /// Runs a command in the Windows command prompt and returns output.
+        /// </summary>
+        private static string RunCommand(string command)
+        {
+            Process process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/C {command}",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            process.Start();
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            return output;
+        }
+        /// <summary>
+        /// Logs information messages.
+        /// </summary>
+        private static void LogInfo(string message)
+        {
+            string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LocalDBLog.txt");
+            File.AppendAllText(logPath, $"{DateTime.Now}: {message}{Environment.NewLine}");
+        }
+        /// <summary>
+        /// Logs error messages.
+        /// </summary>
+        private static void LogError(string message)
+        {
+            string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LocalDBError.txt");
+            File.AppendAllText(logPath, $"{DateTime.Now}: ERROR - {message}{Environment.NewLine}");
+        }
+        private static string GetDBFullPath()
+        {
+            string executablePath = Application.ExecutablePath;
+            string directoryPath = Path.GetDirectoryName(executablePath);
+        
+            string dbPath = Path.Combine(directoryPath, DataBase);
+
+            // Ensure we escape backslashes properly for SQL Server
+            return dbPath;
+        }
+    }
+}
+
